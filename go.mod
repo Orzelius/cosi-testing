@@ -7,6 +7,7 @@ replace github.com/cosi-project/runtime => ../cosi-runtime/
 require (
 	github.com/cosi-project/runtime v0.9.4
 	golang.org/x/sync v0.11.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -31,5 +32,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250127172529-29210b9bc287 // indirect
 	google.golang.org/grpc v1.70.0 // indirect
 	google.golang.org/protobuf v1.36.4 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

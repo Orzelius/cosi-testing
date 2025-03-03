@@ -6,20 +6,27 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
-	"github.com/cosi-project/runtime/pkg/controller/conformance"
+	"github.com/Orzelius/cosi-testing/controllers"
+	"github.com/Orzelius/cosi-testing/myresources"
+	"github.com/Orzelius/cosi-testing/mystate"
 	"github.com/cosi-project/runtime/pkg/controller/runtime"
 	"github.com/cosi-project/runtime/pkg/controller/runtime/options"
 	"github.com/cosi-project/runtime/pkg/logging"
-	"github.com/cosi-project/runtime/pkg/state"
-	"github.com/cosi-project/runtime/pkg/state/impl/inmem"
-	"github.com/cosi-project/runtime/pkg/state/impl/namespaced"
+	cosistate "github.com/cosi-project/runtime/pkg/state"
 	"golang.org/x/sync/errgroup"
 )
 
 func main() {
+	var asd any = "asd"
+	new, ok := asd.(int)
+	if !ok {
+		panic(fmt.Errorf("type mismatch: expected %T, got %T", new, asd))
+	}
+
 	if err := run(); err != nil {
 		log.Fatal(err)
 	}
@@ -29,10 +36,10 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer cancel()
 
-	inmemState := state.WrapCore(namespaced.NewState(inmem.Build))
+	fileState := cosistate.WrapCore(mystate.NewState())
 	logger := logging.DefaultLogger()
 
-	controllerRuntime, err := runtime.NewRuntime(inmemState, logger, options.WithMetrics(true))
+	controllerRuntime, err := runtime.NewRuntime(fileState, logger, options.WithMetrics(true))
 	if err != nil {
 		return fmt.Errorf("error setting up controller runtime: %w", err)
 	}
@@ -40,12 +47,7 @@ func run() error {
 	var eg errgroup.Group
 
 	eg.Go(func() error {
-		ctrl := &conformance.IntToStrController{
-			SourceNamespace: "default",
-			TargetNamespace: "default",
-		}
-
-		if err := controllerRuntime.RegisterController(ctrl); err != nil {
+		if err := controllerRuntime.RegisterController(&controllers.IntToStrController{}); err != nil {
 			return fmt.Errorf("error registering controller: %w", err)
 		}
 
@@ -53,7 +55,7 @@ func run() error {
 	})
 
 	eg.Go(func() error {
-		return runController(ctx, inmemState)
+		return runCreateController(ctx, fileState)
 	})
 
 	logger.Info("waiting for <-ctx.Done()")
@@ -63,7 +65,7 @@ func run() error {
 	return eg.Wait()
 }
 
-func runController(ctx context.Context, st state.State) error {
+func runCreateController(ctx context.Context, st cosistate.State) error {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -74,7 +76,7 @@ func runController(ctx context.Context, st state.State) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			intRes := conformance.NewIntResource("default", fmt.Sprintf("int-%d", i), i)
+			intRes := myresources.NewIntResource(controllers.NS, strconv.Itoa(i), i)
 
 			i++
 
