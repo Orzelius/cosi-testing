@@ -10,23 +10,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Orzelius/cosi-testing/controllers"
-	"github.com/Orzelius/cosi-testing/myresources"
+	"github.com/Orzelius/cosi-testing/myresource"
 	"github.com/Orzelius/cosi-testing/mystate"
-	"github.com/cosi-project/runtime/pkg/controller/runtime"
-	"github.com/cosi-project/runtime/pkg/controller/runtime/options"
 	"github.com/cosi-project/runtime/pkg/logging"
 	cosistate "github.com/cosi-project/runtime/pkg/state"
 	"golang.org/x/sync/errgroup"
 )
 
 func main() {
-	var asd any = "asd"
-	new, ok := asd.(int)
-	if !ok {
-		panic(fmt.Errorf("type mismatch: expected %T, got %T", new, asd))
-	}
-
 	if err := run(); err != nil {
 		log.Fatal(err)
 	}
@@ -39,20 +30,20 @@ func run() error {
 	fileState := cosistate.WrapCore(mystate.NewState())
 	logger := logging.DefaultLogger()
 
-	controllerRuntime, err := runtime.NewRuntime(fileState, logger, options.WithMetrics(true))
-	if err != nil {
-		return fmt.Errorf("error setting up controller runtime: %w", err)
-	}
+	// controllerRuntime, err := runtime.NewRuntime(fileState, logger, options.WithMetrics(true))
+	// if err != nil {
+	// 	return fmt.Errorf("error setting up controller runtime: %w", err)
+	// }
 
 	var eg errgroup.Group
 
-	eg.Go(func() error {
-		if err := controllerRuntime.RegisterController(&controllers.IntToStrController{}); err != nil {
-			return fmt.Errorf("error registering controller: %w", err)
-		}
+	// eg.Go(func() error {
+	// 	if err := controllerRuntime.RegisterController(&controllers.IntToStrController{}); err != nil {
+	// 		return fmt.Errorf("error registering controller: %w", err)
+	// 	}
 
-		return controllerRuntime.Run(ctx)
-	})
+	// 	return controllerRuntime.Run(ctx)
+	// })
 
 	eg.Go(func() error {
 		return runCreateController(ctx, fileState)
@@ -76,8 +67,7 @@ func runCreateController(ctx context.Context, st cosistate.State) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			intRes := myresources.NewIntResource(controllers.NS, strconv.Itoa(i), i)
-
+			intRes := myresource.NewIntResource("", strconv.Itoa(i), i)
 			i++
 
 			if err := st.Create(ctx, intRes); err != nil {

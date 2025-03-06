@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/Orzelius/cosi-testing/myresource"
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/state"
 	"gopkg.in/yaml.v3"
@@ -74,9 +75,12 @@ func (st *State) Get(ctx context.Context, resourcePointer resource.Pointer, ops 
 		return nil, err
 	}
 
-	var r resource.Resource
-	err = yaml.Unmarshal(data, r)
-	return r, err
+	var r = myresource.Marshalable{}
+	err = yaml.Unmarshal(data, &r)
+	val, ok := r.Val.Val.(int)
+	fmt.Println(ok)
+	intres := myresource.NewIntResource("", r.Md.ID(), val)
+	return intres, err
 }
 
 // List resources by type.
@@ -108,7 +112,7 @@ func (st *State) List(ctx context.Context, resourceKind resource.Kind, ops ...st
 			return result, err
 		}
 
-		var r resource.Any = resource.Any{}
+		r := resource.Any{}
 		err = yaml.Unmarshal(data, r)
 		if err != nil {
 			return result, fmt.Errorf("failed to unmarshal data: %w", err)
