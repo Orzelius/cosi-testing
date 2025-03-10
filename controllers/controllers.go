@@ -1,99 +1,116 @@
 package controllers
 
-// const NS = "default"
+import (
+	"context"
+	"fmt"
+	"strconv"
 
-// // IntToStrController converts IntResource to StrResource.
-// type IntToStrController struct{}
+	"github.com/Orzelius/cosi-testing/constants"
+	"github.com/Orzelius/cosi-testing/myresource"
+	"github.com/cosi-project/runtime/pkg/controller"
+	"github.com/cosi-project/runtime/pkg/resource"
+	"github.com/cosi-project/runtime/pkg/safe"
+	"github.com/cosi-project/runtime/pkg/state"
+	"go.uber.org/zap"
+)
 
-// // Name implements controller.Controller interface.
-// func (ctrl *IntToStrController) Name() string {
-// 	return "IntToStrController"
-// }
+// IntToStrController converts IntResource to StrResource.
+type IntToStrController struct{}
 
-// // Inputs implements controller.Controller interface.
-// func (ctrl *IntToStrController) Inputs() []controller.Input {
-// 	return []controller.Input{
-// 		{
-// 			Namespace: NS,
-// 			Type:      myresource.IntResourceType,
-// 			Kind:      controller.InputStrong,
-// 		},
-// 		{
-// 			Namespace: NS,
-// 			Type:      myresource.StrResourceType,
-// 			Kind:      controller.InputDestroyReady,
-// 		},
-// 	}
-// }
+// Name implements controller.Controller interface.
+func (ctrl *IntToStrController) Name() string {
+	return "IntToStrController"
+}
 
-// // Outputs implements controller.Controller interface.
-// func (ctrl *IntToStrController) Outputs() []controller.Output {
-// 	return []controller.Output{
-// 		{
-// 			Type: myresource.StrResourceType,
-// 			Kind: controller.OutputExclusive,
-// 		},
-// 	}
-// }
+// Inputs implements controller.Controller interface.
+func (ctrl *IntToStrController) Inputs() []controller.Input {
+	return []controller.Input{
+		{
+			Namespace: constants.NS,
+			Type:      myresource.IntResourceType,
+			Kind:      controller.InputStrong,
+		},
+		{
+			Namespace: constants.NS,
+			Type:      myresource.StringResourceType,
+			Kind:      controller.InputDestroyReady,
+		},
+	}
+}
 
-// // Run implements controller.Controller interface.
-// //
-// //nolint:gocognit
-// func (ctrl *IntToStrController) Run(ctx context.Context, r controller.Runtime, _ *zap.Logger) error {
-// 	sourceMd := resource.NewMetadata(NS, myresource.IntResourceType, "", resource.VersionUndefined)
+// Outputs implements controller.Controller interface.
+func (ctrl *IntToStrController) Outputs() []controller.Output {
+	return []controller.Output{
+		{
+			Type: myresource.StringResourceType,
+			Kind: controller.OutputExclusive,
+		},
+	}
+}
 
-// 	for {
-// 		select {
-// 		case <-ctx.Done():
-// 			return nil
-// 		case <-r.EventCh():
-// 		}
+// Run implements controller.Controller interface.
+//
+//nolint:gocognit
+func (ctrl *IntToStrController) Run(ctx context.Context, r controller.Runtime, l *zap.Logger) error {
+	sourceMd := resource.NewMetadata(constants.NS, myresource.IntResourceType, constants.NS, resource.VersionUndefined)
 
-// 		intList, err := safe.ReaderList[*myresource.IntResource](ctx, r, sourceMd)
-// 		if err != nil {
-// 			return fmt.Errorf("error listing objects: %w", err)
-// 		}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-r.EventCh():
+		}
 
-// 		for intRes := range intList.All() {
-// 			strRes := myresource.NewStrResource(NS, intRes.Metadata().ID(), "")
+		l.Info("running reconcile")
 
-// 			switch intRes.Metadata().Phase() {
-// 			case resource.PhaseRunning:
-// 				if err = r.AddFinalizer(ctx, intRes.Metadata(), resource.String(strRes)); err != nil {
-// 					return fmt.Errorf("error adding finalizer: %w", err)
-// 				}
+		intList, err := safe.ReaderList[*myresource.IntResource](ctx, r, sourceMd)
+		if err != nil {
+			return fmt.Errorf("error listing objects: %w", err)
+		}
 
-// 				if err = safe.WriterModify(ctx, r, strRes,
-// 					func(r *myresource.StrResource) error {
-// 						r.SetValue(strconv.Itoa(intRes.Value()))
+		for intRes := range intList.All() {
+			strRes := myresource.NewStringResource(intRes.Metadata().ID(), constants.NS)
 
-// 						return nil
-// 					}); err != nil {
-// 					return fmt.Errorf("error updating objects: %w", err)
-// 				}
-// 			case resource.PhaseTearingDown:
-// 				ready, err := r.Teardown(ctx, strRes.Metadata())
-// 				if err != nil && !state.IsNotFoundError(err) {
-// 					return fmt.Errorf("error tearing down: %w", err)
-// 				}
+			switch intRes.Metadata().Phase() {
+			case resource.PhaseRunning:
+				// AddFinalizer adds finalizer to resource metadata handling conflicts.
+				// Finalizer is a free-form string which blocks resource destruction.
+				// Resource can't be destroyed until all the finalizers are cleared.
+				if err = r.AddFinalizer(ctx, intRes.Metadata(), resource.String(strRes)); err != nil {
+					return fmt.Errorf("error adding finalizer: %w", err)
+				}
 
-// 				if err == nil && !ready {
-// 					// reconcile other resources, reconcile loop will be triggered once resource is ready for teardown
-// 					continue
-// 				}
+				if err = safe.WriterModify(ctx, r, strRes,
+					func(r *myresource.StringResource) error {
+						r.TypedSpec().Val = strconv.Itoa(intRes.TypedSpec().Val)
 
-// 				if err = r.Destroy(ctx, strRes.Metadata()); err != nil && !state.IsNotFoundError(err) {
-// 					return fmt.Errorf("error destroying: %w", err)
-// 				}
+						return nil
+					}); err != nil {
+					return fmt.Errorf("error updating objects: %w", err)
+				}
+			case resource.PhaseTearingDown:
+				ready, err := r.Teardown(ctx, strRes.Metadata())
+				if err != nil && !state.IsNotFoundError(err) {
+					return fmt.Errorf("error tearing down: %w", err)
+				}
 
-// 				if err = r.RemoveFinalizer(ctx, intRes.Metadata(), resource.String(strRes)); err != nil {
-// 					if !state.IsNotFoundError(err) {
-// 						return fmt.Errorf("error removing finalizer (str controller): %w", err)
-// 					}
-// 				}
-// 			}
-// 		}
+				if err == nil && !ready {
+					// reconcile other resources, reconcile loop will be triggered once resource is ready for teardown
+					continue
+				}
 
-// 		r.ResetRestartBackoff()
-// 	}
-// }
+				if err = r.Destroy(ctx, strRes.Metadata()); err != nil && !state.IsNotFoundError(err) {
+					return fmt.Errorf("error destroying: %w", err)
+				}
+
+				if err = r.RemoveFinalizer(ctx, intRes.Metadata(), resource.String(strRes)); err != nil {
+					if !state.IsNotFoundError(err) {
+						return fmt.Errorf("error removing finalizer (str controller): %w", err)
+					}
+				}
+			}
+		}
+
+		r.ResetRestartBackoff()
+	}
+}

@@ -12,16 +12,14 @@ require (
 )
 
 require (
-	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
+	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/gertd/go-pluralize v0.2.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.26.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/siderolabs/gen v0.8.0 // indirect
 	github.com/siderolabs/go-pointer v1.0.0 // indirect
-	github.com/siderolabs/go-retry v0.3.3 // indirect
 	github.com/siderolabs/protoenc v0.2.2 // indirect
-	github.com/stretchr/testify v1.10.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect

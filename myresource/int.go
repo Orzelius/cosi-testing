@@ -1,6 +1,7 @@
 package myresource
 
 import (
+	"github.com/Orzelius/cosi-testing/constants"
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/resource/meta"
 	"github.com/cosi-project/runtime/pkg/resource/typed"
@@ -8,15 +9,15 @@ import (
 
 var _ resource.Resource = (*IntResource)(nil)
 
-func NewIntResource(ns resource.Namespace, id resource.ID, val int) *IntResource {
+func NewIntResource(id resource.ID, val int) *IntResource {
 	return typed.NewResource[IntSpec, IntExtension](
-		resource.NewMetadata(ns, IntType, id, resource.VersionUndefined),
+		resource.NewMetadata(constants.NS, IntResourceType, id, resource.VersionUndefined),
 		IntSpec{Val: val},
 	)
 }
 
 const (
-	IntType = resource.Type("int")
+	IntResourceType = resource.Type("int")
 )
 
 type IntResource = typed.Resource[IntSpec, IntExtension]
@@ -26,5 +27,5 @@ type IntSpec = DeepCopyableSpec[int]
 type IntExtension struct{}
 
 func (IntExtension) ResourceDefinition() meta.ResourceDefinitionSpec {
-	return meta.ResourceDefinitionSpec{Type: IntType}
+	return meta.ResourceDefinitionSpec{Type: IntResourceType}
 }
