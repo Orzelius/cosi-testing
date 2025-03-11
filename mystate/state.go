@@ -192,8 +192,17 @@ func (st *State) Update(ctx context.Context, newResource resource.Resource, ops 
 // If a resource doesn't exist, error is returned.
 // If a resource has pending finalizers, error is returned.
 func (st *State) Destroy(ctx context.Context, resourcePointer resource.Pointer, ops ...state.DestroyOption) error {
-	fmt.Println("state Destroy() call, unimplemented")
-	return nil
+	r, err := st.Get(ctx, resourcePointer)
+	if err != nil {
+		return fmt.Errorf("failed to get item to destroy: %w", err)
+	}
+	finalizers := r.Metadata().Finalizers()
+	if !finalizers.Empty() {
+		return fmt.Errorf("failed delete resource %s#%s, has pending finalizers", resourcePointer.Type(), resourcePointer.ID())
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return os.Remove(st.getResourcePath(resourcePointer))
 }
 
 // Watch state of a resource by type.
