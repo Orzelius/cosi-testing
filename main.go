@@ -33,7 +33,8 @@ func run() error {
 	defer cancel()
 
 	fileStateCore := mystate.NewState()
-	defer fileStateCore.Close()
+	go fileStateCore.StartFileWatcher(ctx)
+	defer fileStateCore.CloseFileWatcher()
 	fileState := cosistate.WrapCore(fileStateCore)
 	logger := logging.DefaultLogger()
 

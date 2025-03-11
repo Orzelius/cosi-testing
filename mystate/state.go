@@ -20,13 +20,15 @@ import (
 
 // State implements state.CoreState.
 type State struct {
-	mu      sync.Mutex
-	path    string
-	watcher *fsnotify.Watcher
+	mu   sync.Mutex
+	path string
+
+	watcher        *fsnotify.Watcher
+	watchersByID   map[resourceUrl]chan<- state.Event
+	watchersByType map[resource.Type]chan<- state.Event
 }
 
 func NewState() *State {
-
 	path, err := os.Getwd()
 	if err != nil {
 		panic(err)
@@ -39,10 +41,23 @@ func NewState() *State {
 	os.RemoveAll(statePath)
 	os.Mkdir(statePath, os.ModePerm)
 	return &State{
-		mu:      sync.Mutex{},
-		path:    statePath,
-		watcher: watcher,
+		mu:             sync.Mutex{},
+		path:           statePath,
+		watcher:        watcher,
+		watchersByID:   make(map[resourceUrl]chan<- state.Event),
+		watchersByType: make(map[resource.Type]chan<- state.Event),
 	}
+}
+
+type resourceUrl string
+
+func (url resourceUrl) parts() (resourceType resource.Type, id resource.ID) {
+	parts := strings.Split(string(url), "/")
+	return resource.Type(parts[0]), resource.ID(parts[1])
+}
+
+func getResourceUrl(resourceType resource.Type, id resource.ID) resourceUrl {
+	return resourceUrl(resourceType + "/" + id)
 }
 
 // Create a resource.
@@ -83,7 +98,8 @@ func (st *State) Create(ctx context.Context, r resource.Resource, ops ...state.C
 func (st *State) Get(ctx context.Context, resourcePointer resource.Pointer, ops ...state.GetOption) (resource.Resource, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	data, err := os.ReadFile(st.getResourcePath(resourcePointer))
+	path := st.getResourcePath(resourcePointer)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrNotFound(resourcePointer)
@@ -133,7 +149,7 @@ func (st *State) List(ctx context.Context, resourceKind resource.Kind, ops ...st
 	return result, nil
 }
 
-func (st *State) Close() {
+func (st *State) CloseFileWatcher() {
 	err := st.watcher.Close()
 	if err != nil {
 		panic(err)
@@ -188,79 +204,118 @@ func (st *State) Destroy(ctx context.Context, resourcePointer resource.Pointer, 
 // and then sends any updates to the resource as events.
 func (st *State) Watch(ctx context.Context, resourcePointer resource.Pointer, ch chan<- state.Event, osp ...state.WatchOption) error {
 	id := resourcePointer.ID()
-	return st.watch(ctx, resourcePointer, ch, &id)
+	fmt.Println("Watch called for "+resourcePointer.Type(), "#", id)
+	return nil
 }
 
 // WatchKind watches resources of specific kind (namespace and type).
 func (st *State) WatchKind(ctx context.Context, resourceKind resource.Kind, ch chan<- state.Event, ops ...state.WatchKindOption) error {
-	return st.watch(ctx, resourceKind, ch, nil)
-}
-
-// WatchKind watches resources of specific kind (namespace and type).
-func (st *State) watch(ctx context.Context, resourceKind resource.Kind, ch chan<- state.Event, watchID *resource.ID, ops ...state.WatchKindOption) error {
-	fmt.Printf("watch called for type: %s\n", resourceKind.Type())
-	go func() {
-		for {
-			select {
-			case event := <-st.watcher.Events:
-				log.Println("event:", event)
-				filename, _ := last(strings.Split(event.Name, "/"))
-				id := strings.Split(filename, ".")[0]
-				if watchID != nil && *watchID != id {
-					continue
-				}
-				e := state.Event{Resource: myresource.Cast(resource.NewMetadata(constants.NS, resourceKind.Type(), id, resource.VersionUndefined), nil)}
-				if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-					e.Type = state.Destroyed
-					ch <- e
-					continue
-				}
-				r, err := st.Get(ctx, resource.NewMetadata(constants.NS, resourceKind.Type(), id, resource.VersionUndefined))
-				if state.IsNotFoundError(err) {
-					continue
-				}
-				e.Error = err
-				e.Resource = r
-				if event.Has(fsnotify.Create) {
-					e.Type = state.Created
-					ch <- e
-					continue
-				}
-				if event.Has(fsnotify.Write) {
-					e.Type = state.Updated
-					ch <- e
-					continue
-				}
-			case err := <-st.watcher.Errors:
-				log.Println("watch error:", err)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
 	path := st.getResourceKindDirPath(resourceKind)
 	os.Mkdir(path, os.ModePerm)
 	err := st.watcher.Add(path)
 	if err != nil {
 		return err
 	}
+	st.watchersByType[resourceKind.Type()] = ch
+	go func() {
+		<-ctx.Done()
+		fmt.Println("removing watcher for ", path)
+		st.watcher.Remove(path)
+		delete(st.watchersByType, resourceKind.Type())
+	}()
 	return nil
+}
+
+func (st *State) StartFileWatcher(ctx context.Context) {
+	for {
+		select {
+		case err := <-st.watcher.Errors:
+			log.Println("watch error:", err)
+		case <-ctx.Done():
+			return
+		case event := <-st.watcher.Events:
+			if event.Has(fsnotify.Chmod) {
+				continue
+			}
+
+			resourceType, id := getResourceDataFromEvent(event)
+			listeners := st.findListeners(resourceType, id)
+			if len(listeners) == 0 {
+				continue
+			}
+
+			e := state.Event{Resource: myresource.Cast(resource.NewMetadata(constants.NS, resourceType, id, resource.VersionUndefined), nil)}
+			if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+				e.Type = state.Destroyed
+				sendToListeners(listeners, e)
+				continue
+			}
+			r, err := st.Get(ctx, resource.NewMetadata(constants.NS, resourceType, id, resource.VersionUndefined))
+			if state.IsNotFoundError(err) {
+				continue
+			}
+			e.Error = err
+			e.Resource = r
+			if event.Has(fsnotify.Create) {
+				e.Type = state.Created
+				sendToListeners(listeners, e)
+				continue
+			}
+			if event.Has(fsnotify.Write) {
+				e.Type = state.Updated
+				sendToListeners(listeners, e)
+				continue
+			}
+		}
+	}
+}
+
+func sendToListeners(listeners []chan<- state.Event, e state.Event) {
+	for _, listener := range listeners {
+		listener <- e
+	}
+}
+
+func getResourceDataFromEvent(event fsnotify.Event) (string, string) {
+	pathParts := strings.Split(event.Name, "/")
+	filename, _ := last(pathParts)
+	resourceType := pathParts[len(pathParts)-2]
+	id := strings.Split(filename, ".")[0]
+	return resourceType, id
+}
+
+func (st *State) findListeners(resourceType string, id string) []chan<- state.Event {
+	var listeners []chan<- state.Event
+	for kind, ch := range st.watchersByType {
+		if kind == resourceType {
+			listeners = append(listeners, ch)
+		}
+	}
+	for resourcePointer, ch := range st.watchersByID {
+		rType, ID := resourcePointer.parts()
+		if rType == resourceType && ID == id {
+			listeners = append(listeners, ch)
+		}
+	}
+	return listeners
 }
 
 // WatchKindAggregated watches resources of specific kind (namespace and type), updates are sent aggregated.
 func (st *State) WatchKindAggregated(ctx context.Context, resourceKind resource.Kind, ch chan<- []state.Event, ops ...state.WatchKindOption) error {
+	fmt.Println("WatchKindAggregated called for " + resourceKind.Type())
 	singleElChan := make(chan state.Event)
 	go func() {
 		for {
 			select {
 			case event := <-singleElChan:
+				fmt.Printf("Event: %s %s#%s\n", event.Type, event.Resource.Metadata().Type(), event.Resource.Metadata().ID())
 				ch <- []state.Event{event}
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
-	return st.watch(ctx, resourceKind, singleElChan, nil)
+	return st.WatchKind(ctx, resourceKind, singleElChan, nil)
 }
 
 func (st *State) getResourcePath(r resource.Pointer) string {
