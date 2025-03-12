@@ -2,10 +2,8 @@ package controllers
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/Orzelius/cosi-testing/constants"
 	"github.com/Orzelius/cosi-testing/myresource"
@@ -18,9 +16,7 @@ import (
 )
 
 // QIntToStrController converts IntResource to StrResource as a QController.
-type QIntToStrController struct {
-	ShutdownCalled bool
-}
+type QIntToStrController struct{}
 
 // Name implements controller.QController interface.
 func (ctrl *QIntToStrController) Name() string {
@@ -29,8 +25,6 @@ func (ctrl *QIntToStrController) Name() string {
 
 // Settings implements controller.QController interface.
 func (ctrl *QIntToStrController) Settings() controller.QSettings {
-	failRunHook := true
-
 	return controller.QSettings{
 		Inputs: []controller.Input{
 			{
@@ -51,53 +45,24 @@ func (ctrl *QIntToStrController) Settings() controller.QSettings {
 			},
 		},
 		Concurrency: optional.Some(uint(4)),
-		RunHook: func(ctx context.Context, _ *zap.Logger, r controller.QRuntime) error {
-			interval := time.NewTicker(time.Second)
-
-			defer interval.Stop()
-
-			if failRunHook {
-				failRunHook = false
-
-				return errors.New("oh no")
-			}
-
-			for {
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-interval.C:
-					// if err := safe.WriterModify(ctx, r, NewStrResource("hooks", "lastInvokation", ""), func(r *StrResource) error {
-					// 	r.value.value = time.Now().Format(time.RFC3339)
-
-					// 	return nil
-					// }); err != nil {
-					// 	return err
-					// }
-				}
-			}
-		},
-		ShutdownHook: func() {
-			ctrl.ShutdownCalled = true
-		},
 	}
 }
 
 // Reconcile implements controller.QController interface.
 func (ctrl *QIntToStrController) Reconcile(ctx context.Context, _ *zap.Logger, r controller.QRuntime, ptr resource.Pointer) error {
 	src, err := safe.ReaderGet[*myresource.IntResource](ctx, r, ptr)
+	deleted := false
 	if err != nil {
 		if state.IsNotFoundError(err) {
-			return nil
+			deleted = true
+		} else {
+			return err
 		}
-
-		return err
 	}
 
-	switch src.Metadata().Phase() {
-	case resource.PhaseTearingDown:
+	if deleted || src.Metadata().Phase() == resource.PhaseTearingDown {
 		// cleanup destination resource as needed
-		dst := myresource.NewStringResource(src.Metadata().ID(), "").Metadata()
+		dst := myresource.NewStringResource(ptr.ID(), "").Metadata()
 
 		ready, err := r.Teardown(ctx, dst)
 		if err != nil {
@@ -118,7 +83,8 @@ func (ctrl *QIntToStrController) Reconcile(ctx context.Context, _ *zap.Logger, r
 		}
 
 		return r.RemoveFinalizer(ctx, ptr, ctrl.Name())
-	case resource.PhaseRunning:
+	}
+	if src.Metadata().Phase() == resource.PhaseRunning {
 		if err := r.AddFinalizer(ctx, ptr, ctrl.Name()); err != nil {
 			return err
 		}
@@ -130,9 +96,8 @@ func (ctrl *QIntToStrController) Reconcile(ctx context.Context, _ *zap.Logger, r
 
 			return nil
 		})
-	default:
-		panic("unexpected phase")
 	}
+	panic("unexpected phase")
 }
 
 // MapInput implements controller.QController interface.
