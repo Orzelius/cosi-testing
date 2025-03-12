@@ -1,6 +1,7 @@
 package myresource
 
 import (
+	"github.com/Orzelius/cosi-testing/constants"
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/resource/meta"
 	"github.com/cosi-project/runtime/pkg/resource/typed"
@@ -23,5 +24,5 @@ type AnySpec = DeepCopyableSpec[any]
 type AnyExtension struct{}
 
 func (AnyExtension) ResourceDefinition() meta.ResourceDefinitionSpec {
-	return meta.ResourceDefinitionSpec{Type: AnyResourceType}
+	return meta.ResourceDefinitionSpec{Type: AnyResourceType, DefaultNamespace: constants.NS}
 }

@@ -38,7 +38,7 @@ func NewState() *State {
 		log.Fatal(err)
 	}
 	statePath := path + "/test"
-	os.RemoveAll(statePath)
+	// os.RemoveAll(statePath)
 	os.Mkdir(statePath, os.ModePerm)
 	return &State{
 		mu:             sync.Mutex{},
@@ -311,7 +311,22 @@ func (st *State) findListeners(resourceType string, id string) []chan<- state.Ev
 
 // WatchKindAggregated watches resources of specific kind (namespace and type), updates are sent aggregated.
 func (st *State) WatchKindAggregated(ctx context.Context, resourceKind resource.Kind, ch chan<- []state.Event, ops ...state.WatchKindOption) error {
-	fmt.Println("WatchKindAggregated called for " + resourceKind.Type())
+	var options state.WatchKindOptions
+	for _, opt := range ops {
+		opt(&options)
+	}
+	if options.BootstrapContents {
+		resources, err := st.List(ctx, resourceKind)
+		if err != nil {
+			return err
+		}
+		var events []state.Event
+		for _, r := range resources.Items {
+			events = append(events, state.Event{Resource: r, Type: state.Created})
+		}
+		events = append(events, state.Event{Type: state.Bootstrapped})
+		ch <- events
+	}
 	singleElChan := make(chan state.Event)
 	go func() {
 		for {

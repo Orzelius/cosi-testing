@@ -27,5 +27,5 @@ type IntSpec = DeepCopyableSpec[int]
 type IntExtension struct{}
 
 func (IntExtension) ResourceDefinition() meta.ResourceDefinitionSpec {
-	return meta.ResourceDefinitionSpec{Type: IntResourceType}
+	return meta.ResourceDefinitionSpec{Type: IntResourceType, DefaultNamespace: constants.NS}
 }

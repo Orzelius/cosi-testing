@@ -46,7 +46,7 @@ func run() error {
 	var eg errgroup.Group
 
 	eg.Go(func() error {
-		if err := controllerRuntime.RegisterQController(&controllers.QIntToStrController{}); err != nil {
+		if err := controllerRuntime.RegisterQController(controllers.QTransformController); err != nil {
 			return fmt.Errorf("error registering controller: %w", err)
 		}
 

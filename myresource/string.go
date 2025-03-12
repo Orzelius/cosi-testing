@@ -27,5 +27,5 @@ type StringSpec = DeepCopyableSpec[string]
 type StringExtension struct{}
 
 func (StringExtension) ResourceDefinition() meta.ResourceDefinitionSpec {
-	return meta.ResourceDefinitionSpec{Type: StringResourceType}
+	return meta.ResourceDefinitionSpec{Type: StringResourceType, DefaultNamespace: constants.NS}
 }
