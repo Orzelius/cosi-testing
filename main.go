@@ -8,17 +8,15 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
-	"time"
 
 	"github.com/Orzelius/cosi-testing/constants"
 	"github.com/Orzelius/cosi-testing/controllers"
 	"github.com/Orzelius/cosi-testing/myresource"
-	"github.com/Orzelius/cosi-testing/mystate"
 	"github.com/cosi-project/runtime/pkg/controller/runtime"
 	"github.com/cosi-project/runtime/pkg/controller/runtime/options"
 	"github.com/cosi-project/runtime/pkg/logging"
-	"github.com/cosi-project/runtime/pkg/resource"
 	cosistate "github.com/cosi-project/runtime/pkg/state"
+	"github.com/cosi-project/runtime/pkg/state/impl/inmem"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -32,13 +30,16 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer cancel()
 
-	fileStateCore := mystate.NewState()
-	go fileStateCore.StartFileWatcher(ctx)
-	defer fileStateCore.CloseFileWatcher()
-	fileState := cosistate.WrapCore(fileStateCore)
+	// fileStateCore := mystate.NewState()
+	// go fileStateCore.StartFileWatcher(ctx)
+	// defer fileStateCore.CloseFileWatcher()
+	// fileState := cosistate.WrapCore(fileStateCore)
+
+	state := cosistate.WrapCore(inmem.NewState(constants.NS))
+
 	logger := logging.DefaultLogger()
 
-	controllerRuntime, err := runtime.NewRuntime(fileState, logger, options.WithMetrics(true))
+	controllerRuntime, err := runtime.NewRuntime(state, logger, options.WithMetrics(true))
 	if err != nil {
 		return fmt.Errorf("error setting up controller runtime: %w", err)
 	}
@@ -46,7 +47,14 @@ func run() error {
 	var eg errgroup.Group
 
 	eg.Go(func() error {
-		if err := controllerRuntime.RegisterQController(controllers.QTransformController); err != nil {
+		// if err := controllerRuntime.RegisterQController(&controllers.QIntToStrController{}); err != nil {
+		// 	return fmt.Errorf("error registering controller: %w", err)
+		// }
+		// if err := controllerRuntime.RegisterController(&controllers.IntController{}); err != nil {
+		// 	return fmt.Errorf("error registering controller: %w", err)
+		// }
+
+		if err := controllerRuntime.RegisterController(&controllers.KubernetesInputController{}); err != nil {
 			return fmt.Errorf("error registering controller: %w", err)
 		}
 
@@ -54,37 +62,44 @@ func run() error {
 	})
 
 	eg.Go(func() error {
-		return runCreateController(ctx, fileState)
+		return runCreateController(ctx, controllerRuntime.CachedState())
 	})
 
 	<-ctx.Done()
 	return eg.Wait()
 }
 
-func runCreateController(ctx context.Context, st cosistate.State) error {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+func runCreateController(ctx context.Context, r cosistate.CoreState) error {
+	k8sManifests := `apiVersion: v1
+kind: Namespace
+metadata:
+  name: test-lab
+  labels:
+    app.kubernetes.io/part-of: test-lab
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: test-lab
+data:
+  APP_MESSAGE: "hello from configmap"
+  APP_PORT: "8080"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+  namespace: test-lab
+type: Opaque
+stringData:
+  PASSWORD: "dummy-password"
+`
 
-	i := 1
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			ints, err := st.List(ctx, resource.NewMetadata(constants.NS, myresource.IntResourceType, constants.NS, resource.VersionUndefined))
-			if err != nil {
-				panic(err)
-			}
-			if len(ints.Items) >= 3 {
-				continue
-			}
-			intRes := myresource.NewIntResource(strconv.Itoa(i), i)
-			i++
-
-			if err := st.Create(ctx, intRes); err != nil {
-				return fmt.Errorf("error creating resource: %w", err)
-			}
-		}
+	intBagSmall := myresource.NewKubernetesInput(strconv.Itoa(1), k8sManifests)
+	if err := r.Create(ctx, intBagSmall); err != nil {
+		return fmt.Errorf("error creating resource: %w", err)
 	}
+
+	return nil
 }

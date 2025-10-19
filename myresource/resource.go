@@ -37,6 +37,9 @@ func Cast(meta resource.Metadata, val any) resource.Resource {
 	case StringResourceType:
 		v, _ := val.(string)
 		return typed.NewResource[StringSpec, StringExtension](meta, StringSpec{Val: v})
+	case BoolResourceType:
+		v, _ := val.(bool)
+		return typed.NewResource[BoolSpec, BoolExtension](meta, BoolSpec{Val: v})
 	case AnyResourceType:
 		return typed.NewResource[AnySpec, AnyExtension](meta, AnySpec{Val: val})
 	}
