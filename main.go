@@ -3,103 +3,102 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
-	"os/signal"
-	"strconv"
-	"syscall"
 
-	"github.com/Orzelius/cosi-testing/constants"
-	"github.com/Orzelius/cosi-testing/controllers"
-	"github.com/Orzelius/cosi-testing/myresource"
-	"github.com/cosi-project/runtime/pkg/controller/runtime"
-	"github.com/cosi-project/runtime/pkg/controller/runtime/options"
-	"github.com/cosi-project/runtime/pkg/logging"
-	cosistate "github.com/cosi-project/runtime/pkg/state"
-	"github.com/cosi-project/runtime/pkg/state/impl/inmem"
-	"golang.org/x/sync/errgroup"
+	"github.com/Orzelius/cosi-testing/backend"
+	mylog "github.com/Orzelius/cosi-testing/log"
+	"github.com/charmbracelet/log"
+	"github.com/spf13/cobra"
 )
 
+var manifestsPath string
+var backendName string
+var logLevel string
+
 func main() {
-	if err := run(); err != nil {
-		log.Fatal(err)
+	ctx := context.Background()
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }
 
-func run() error {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
-	defer cancel()
+func init() {
+	rootCmd.PersistentFlags().StringVar(&manifestsPath, "file", "", "path to the kubernetes manifests file to apply/diff")
+	rootCmd.PersistentFlags().StringVar(&backendName, "backend", "", "logic to use to ('kubernetes' or 'ssa')")
+	rootCmd.PersistentFlags().StringVarP(&logLevel, "log-level", "l", "info", "log level ('info' or 'debug')")
 
-	// fileStateCore := mystate.NewState()
-	// go fileStateCore.StartFileWatcher(ctx)
-	// defer fileStateCore.CloseFileWatcher()
-	// fileState := cosistate.WrapCore(fileStateCore)
+	cobra.MarkFlagRequired(rootCmd.PersistentFlags(), "file")
+	cobra.MarkFlagRequired(rootCmd.PersistentFlags(), "backend")
 
-	state := cosistate.WrapCore(inmem.NewState(constants.NS))
+	rootCmd.AddCommand(diffCmd)
+	rootCmd.AddCommand(applyCmd)
+}
 
-	logger := logging.DefaultLogger()
-
-	controllerRuntime, err := runtime.NewRuntime(state, logger, options.WithMetrics(true))
-	if err != nil {
-		return fmt.Errorf("error setting up controller runtime: %w", err)
-	}
-
-	var eg errgroup.Group
-
-	eg.Go(func() error {
-		// if err := controllerRuntime.RegisterQController(&controllers.QIntToStrController{}); err != nil {
-		// 	return fmt.Errorf("error registering controller: %w", err)
-		// }
-		// if err := controllerRuntime.RegisterController(&controllers.IntController{}); err != nil {
-		// 	return fmt.Errorf("error registering controller: %w", err)
-		// }
-
-		if err := controllerRuntime.RegisterController(&controllers.KubernetesInputController{}); err != nil {
-			return fmt.Errorf("error registering controller: %w", err)
+var rootCmd = &cobra.Command{
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		level, err := log.ParseLevel(logLevel)
+		if err != nil {
+			return err
 		}
 
-		return controllerRuntime.Run(ctx)
-	})
+		mylog.GetLogger().SetLevel(level)
 
-	eg.Go(func() error {
-		return runCreateController(ctx, controllerRuntime.CachedState())
-	})
-
-	<-ctx.Done()
-	return eg.Wait()
+		return nil
+	},
 }
 
-func runCreateController(ctx context.Context, r cosistate.CoreState) error {
-	k8sManifests := `apiVersion: v1
-kind: Namespace
-metadata:
-  name: test-lab
-  labels:
-    app.kubernetes.io/part-of: test-lab
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: app-config
-  namespace: test-lab
-data:
-  APP_MESSAGE: "hello from configmap"
-  APP_PORT: "8080"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: app-secret
-  namespace: test-lab
-type: Opaque
-stringData:
-  PASSWORD: "dummy-password"
-`
+var diffCmd = &cobra.Command{
+	Use:   "diff",
+	Short: "diff the local manifests against remote state",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		be, err := getInitializedBackend()
+		if err != nil {
+			return nil
+		}
 
-	intBagSmall := myresource.NewKubernetesInput(strconv.Itoa(1), k8sManifests)
-	if err := r.Create(ctx, intBagSmall); err != nil {
-		return fmt.Errorf("error creating resource: %w", err)
+		data, err := readManifestFile()
+		if err != nil {
+			return nil
+		}
+
+		return be.Diff(cmd.Context(), data)
+	},
+}
+
+var applyCmd = &cobra.Command{
+	Use:   "apply",
+	Short: "apply the local manifests (with prune)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		be, err := getInitializedBackend()
+		if err != nil {
+			return nil
+		}
+
+		data, err := readManifestFile()
+		if err != nil {
+			return nil
+		}
+
+		return be.Apply(cmd.Context(), data)
+	},
+}
+
+func getInitializedBackend() (backend.Backend, error) {
+	var be backend.Backend
+	switch backendName {
+	case "ssa":
+		be = &backend.FluxSSA{}
+	case "kubernetes":
+		be = &backend.Kubernetes{}
+	default:
+		return nil, fmt.Errorf("unknown backend: %q", backendName)
 	}
 
-	return nil
+	err := be.Init()
+	return be, err
+}
+
+func readManifestFile() ([]byte, error) {
+	return os.ReadFile(manifestsPath)
 }
