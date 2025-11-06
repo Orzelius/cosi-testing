@@ -3,6 +3,7 @@ package backend
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/fluxcd/pkg/ssa/utils"
 	"github.com/gonvenience/ytbx"
 	"github.com/homeport/dyff/pkg/dyff"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
@@ -26,7 +28,7 @@ type FluxSSA struct {
 	l               *log.MyLogger
 }
 
-func (b *FluxSSA) Init() error {
+func (b *FluxSSA) Init(ctx context.Context) error {
 	flags := genericclioptions.NewConfigFlags(true)
 	kubeconfig, err := flags.ToRESTConfig()
 	if err != nil {
@@ -56,13 +58,17 @@ func (b *FluxSSA) Init() error {
 	return nil
 }
 
-func (b *FluxSSA) Apply(ctx context.Context, data []byte) error {
+func (b *FluxSSA) Apply(ctx context.Context, data []byte, dryRun bool) error {
+	if dryRun {
+		return errors.New("ssa does not supoprt dry run")
+	}
+
 	objects, err := utils.ReadObjects(strings.NewReader(string(data)))
 	if err != nil {
 		return err
 	}
 
-	b.l.Infof("starting apply process of %d item(s)", len(objects))
+	b.l.Infof("starting apply process of %d item(s), dry-run=%t", len(objects), dryRun)
 
 	changeSet, err := b.resourceManager.ApplyAll(ctx, objects, ssa.ApplyOptions{
 		Force:             false,
@@ -85,63 +91,47 @@ func (b *FluxSSA) Apply(ctx context.Context, data []byte) error {
 }
 
 func (b *FluxSSA) Diff(ctx context.Context, data []byte) error {
-	objects, err := utils.ReadObjects(strings.NewReader(string(data)))
-	if err != nil {
-		return err
-	}
-
-	b.l.Infof("starting diff process of %d item(s)", len(objects))
-
-	for _, obj := range objects {
-		changeSet, inclusterObj, inputObj, err := b.resourceManager.Diff(ctx, obj, ssa.DiffOptions{})
-		if err != nil {
-			return err
-		}
-
-		extraDiffDetails := ""
-		if changeSet.Action == ssa.ConfiguredAction {
-			// use dyff to diff in-cluster vs input object in a temporary directory
-			tmpDir, err := os.MkdirTemp("", "dyff-")
-			if err != nil {
-				return err
-			}
-			defer os.RemoveAll(tmpDir)
-
-			liveYAML, _ := yaml.Marshal(inclusterObj)
-			liveFile := filepath.Join(tmpDir, "live.yaml")
-			if err := os.WriteFile(liveFile, liveYAML, 0o644); err != nil {
-				return err
-			}
-
-			mergedYAML, _ := yaml.Marshal(inputObj)
-			mergedFile := filepath.Join(tmpDir, "merged.yaml")
-			if err := os.WriteFile(mergedFile, mergedYAML, 0o644); err != nil {
-				return err
-			}
-
-			from, to, err := ytbx.LoadFiles(liveFile, mergedFile)
-			if err != nil {
-				return err
-			}
-
-			report, err := dyff.CompareInputFiles(from, to,
-				dyff.IgnoreOrderChanges(false),
-				dyff.KubernetesEntityDetection(true),
-			)
-			if err != nil {
-				return err
-			}
-
-			var buf bytes.Buffer
-			reportWriter := &dyff.HumanReport{Report: report, OmitHeader: true}
-			if err := reportWriter.WriteReport(&buf); err != nil {
-				return err
-			}
-			extraDiffDetails = buf.String()
-		}
-
-		b.l.Infof("%s %s %s%s", changeSet.Action.String(), changeSet.ObjMetadata.GroupKind, changeSet.ObjMetadata.Name, extraDiffDetails)
-	}
-
 	return nil
+}
+
+func getHumanReadableDiff(inclusterObj *unstructured.Unstructured, inputObj *unstructured.Unstructured) (string, error) {
+	// use dyff to diff in-cluster vs input object in a temporary directory
+	tmpDir, err := os.MkdirTemp("", "dyff-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	liveYAML, _ := yaml.Marshal(inclusterObj)
+	liveFile := filepath.Join(tmpDir, "live.yaml")
+	if err := os.WriteFile(liveFile, liveYAML, 0o644); err != nil {
+		return "", err
+	}
+
+	mergedYAML, _ := yaml.Marshal(inputObj)
+	mergedFile := filepath.Join(tmpDir, "merged.yaml")
+	if err := os.WriteFile(mergedFile, mergedYAML, 0o644); err != nil {
+		return "", err
+	}
+
+	from, to, err := ytbx.LoadFiles(liveFile, mergedFile)
+	if err != nil {
+		return "", err
+	}
+
+	report, err := dyff.CompareInputFiles(from, to,
+		dyff.IgnoreOrderChanges(false),
+		dyff.KubernetesEntityDetection(true),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	var buf bytes.Buffer
+	reportWriter := &dyff.HumanReport{Report: report, OmitHeader: true}
+	if err := reportWriter.WriteReport(&buf); err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
 }
