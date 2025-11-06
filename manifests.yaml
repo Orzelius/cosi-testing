@@ -39,7 +39,6 @@ spec:
         app: app-deployment
     spec:
       securityContext:
-        asd: a
         runAsNonRoot: false
         seccompProfile:
           type: RuntimeDefault

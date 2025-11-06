@@ -171,7 +171,9 @@ func (b *Kubernetes) Apply(ctx context.Context, data []byte, dryRun bool) error 
 		case <-ctx.Done():
 			return nil
 		case e, ok := <-eventCh:
-			if e.Type == event.ErrorType {
+			if e.Type == event.ErrorType ||
+				e.ApplyEvent.Status == event.ApplyFailed ||
+				e.PruneEvent.Status == event.PruneFailed {
 				b.log.Error(e.String())
 			} else {
 				b.log.Debug(e.String())
